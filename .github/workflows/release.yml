@@ -46,9 +46,9 @@ jobs:
           # Use apksigner from build-tools 34 for F-Droid reproducibility
           $ANDROID_HOME/build-tools/34.0.0/apksigner sign \
             --ks /tmp/release.keystore \
-            --ks-pass pass:${{ secrets.RELEASE_STORE_PASSWORD }} \
-            --ks-key-alias ${{ secrets.RELEASE_KEY_ALIAS }} \
-            --key-pass pass:${{ secrets.RELEASE_KEY_PASSWORD }} \
+            --ks-pass "pass:${{ secrets.RELEASE_STORE_PASSWORD }}" \
+            --ks-key-alias "${{ secrets.RELEASE_KEY_ALIAS }}" \
+            --key-pass "pass:${{ secrets.RELEASE_KEY_PASSWORD }}" \
             --out GifBoard-${{ github.ref_name }}.apk \
             app/build/outputs/apk/release/app-release-unsigned.apk
 
