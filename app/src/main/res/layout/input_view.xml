@@ -28,6 +28,38 @@
             android:alpha="0.7"
             android:padding="4dp" />
 
+        <LinearLayout
+            android:id="@+id/mode_toggle_container"
+            android:layout_width="wrap_content"
+            android:layout_height="34dp"
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/toggle_background"
+            android:orientation="horizontal"
+            android:padding="2dp"
+            android:gravity="center_vertical">
+
+            <ImageButton
+                android:id="@+id/gif_mode_button"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
+                android:background="@drawable/circle_background"
+                android:padding="2dp"
+                android:src="@drawable/ic_gif"
+                android:scaleType="fitCenter"
+                android:contentDescription="GIF Search Mode" />
+
+            <ImageButton
+                android:id="@+id/image_mode_button"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
+                android:background="@null"
+                android:padding="4dp"
+                android:src="@drawable/ic_image_search"
+                android:scaleType="fitCenter"
+                android:alpha="0.5"
+                android:contentDescription="Image Search Mode" />
+        </LinearLayout>
+
         <FrameLayout
             android:layout_width="0dp"
             android:layout_height="match_parent"
@@ -47,6 +79,7 @@
                 android:focusableInTouchMode="false"
                 android:clickable="false"
                 android:longClickable="false"
+                android:importantForAutofill="no"
                 android:cursorVisible="true"
                 android:textCursorDrawable="@drawable/active_indicator"
                 android:maxLines="1" />

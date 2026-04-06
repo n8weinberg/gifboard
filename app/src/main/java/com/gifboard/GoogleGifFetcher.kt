@@ -62,4 +62,43 @@ class GoogleGifFetcher {
 
         return content
     }
+
+    fun fetchMemes(request: GifSearchRequest): String {
+        require(request.query.isNotBlank()) { "Query cannot be empty" }
+
+        // Add meme-specific search terms to find meme images
+        val memeQuery = "$request.query meme"
+
+        val params = mapOf(
+            "q" to memeQuery,
+            "tbm" to "isch", // "to be matched = image search"
+            "tbs" to "itp:static", // "to be searched = image type: static (not animated)"
+            "client" to "chrome",
+            "safe" to request.safeSearch,
+            "asearch" to "isch",
+            "async" to "ijn:${request.pageIndex},_fmt:json"
+        )
+
+        val queryString = params.entries.joinToString("&") { (key, value) ->
+            "${URLEncoder.encode(key, StandardCharsets.UTF_8.toString())}=${URLEncoder.encode(value, StandardCharsets.UTF_8.toString())}"
+        }
+
+        val url = "$BASE_URL?$queryString"
+
+        val httpRequest = Request.Builder()
+            .url(url)
+            .header("User-Agent", USER_AGENT)
+            .get()
+            .build()
+
+        val response = client.newCall(httpRequest).execute()
+        var content = response.body?.string() ?: ""
+
+        // Strip security prefix
+        if (content.startsWith(")]}'")) {
+            content = content.substring(4).trim()
+        }
+
+        return content
+    }
 }

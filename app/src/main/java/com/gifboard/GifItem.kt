@@ -14,4 +14,7 @@ data class GifItem(
     
     // Mutable state for tracking load failures (used when live previews enabled)
     var isFullLoadFailed: Boolean = false
+    
+    // Mutable state for tracking if item is displaying fallback image instead of gif
+    var isFallbackImage: Boolean = false
 }

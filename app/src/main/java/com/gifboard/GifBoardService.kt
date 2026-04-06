@@ -88,6 +88,12 @@ class GifBoardService : InputMethodService() {
 
     private lateinit var adapter: GifAdapter
     private val fetcher = GoogleGifFetcher()
+    
+    // Meme search mode
+    private var isMemeSearchMode = false
+    private lateinit var gifModeButton: ImageButton
+    private lateinit var imageModeButton: ImageButton
+    private lateinit var modeToggleContainer: View
 
     // Backspace repeat handling
     private val backspaceHandler = Handler(Looper.getMainLooper())
@@ -199,11 +205,31 @@ class GifBoardService : InputMethodService() {
 
               val livePreviews = prefs.getBoolean("live_previews", true)
               val insertLink = prefs.getBoolean("link_on_long_press", false)
+              val insertImage = prefs.getBoolean("long_press_insert_image", true)
               val brokenBehavior = prefs.getString("broken_gif_behavior", "hide") ?: "hide"
-              adapter.setPreferences(livePreviews, insertLink, brokenBehavior)
+              adapter.setPreferences(livePreviews, insertLink, brokenBehavior, insertImage)
 
               vibrationStrength = prefs.getString("vibration_strength", "medium") ?: "medium"
          }
+
+        // Ensure we don't start with an active search bar focus to avoid conflicts
+        // when switching into this IME
+        if (::searchInput.isInitialized) {
+            deactivateSearchBar()
+        }
+    }
+
+    override fun onEvaluateFullscreenMode(): Boolean {
+        return false
+    }
+
+    override fun onStartInput(attribute: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
+        super.onStartInput(attribute, restarting)
+        // If we're starting input for our own internal search field, we might want to skip some logic
+        if (attribute?.packageName == packageName && attribute?.fieldId == R.id.search_input) {
+            // Internal focus, ignore or handle specially
+            return
+        }
     }
 
     override fun onCreateInputView(): View {
@@ -211,9 +237,19 @@ class GifBoardService : InputMethodService() {
         rootView = view
 
         searchInput = view.findViewById(R.id.search_input)
+        searchInput.showSoftInputOnFocus = false
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            searchInput.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
+        }
+        searchInput.inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+
+
         clearButton = view.findViewById(R.id.clear_button)
         searchButton = view.findViewById(R.id.key_search)
         settingsButton = view.findViewById(R.id.settings_button)
+        gifModeButton = view.findViewById(R.id.gif_mode_button)
+        imageModeButton = view.findViewById(R.id.image_mode_button)
+        modeToggleContainer = view.findViewById(R.id.mode_toggle_container)
         progressBar = view.findViewById(R.id.progress_bar)
         gifRecycler = view.findViewById(R.id.gif_recycler)
         shiftButton = view.findViewById(R.id.key_shift)
@@ -320,6 +356,10 @@ class GifBoardService : InputMethodService() {
             onGifLongClick = { url ->
                 performHeavyHaptic()
                 commitGifUrl(url)
+            },
+            onGifLongClickImage = { imageUrl ->
+                performHeavyHaptic()
+                commitImage(imageUrl)
             }
         )
 
@@ -331,8 +371,44 @@ class GifBoardService : InputMethodService() {
         gifRecycler.adapter = adapter
         val livePreviews = prefs.getBoolean("live_previews", true)
         val insertLink = prefs.getBoolean("link_on_long_press", false)
+        val insertImage = prefs.getBoolean("long_press_insert_image", true)
         val brokenBehavior = prefs.getString("broken_gif_behavior", "hide") ?: "hide"
-        adapter.setPreferences(livePreviews, insertLink, brokenBehavior)
+        adapter.setPreferences(livePreviews, insertLink, brokenBehavior, insertImage)
+
+        // Check if meme search is enabled
+        isMemeSearchMode = false
+        
+        // Configure meme toggle buttons - only visible if meme search feature is enabled
+        val memeSearchEnabled = prefs.getBoolean("enable_meme_search", false)
+        modeToggleContainer.visibility = if (memeSearchEnabled) View.VISIBLE else View.GONE
+        
+        fun updateToggleUI() {
+            if (isMemeSearchMode) {
+                imageModeButton.alpha = 1.0f
+                imageModeButton.setBackgroundResource(R.drawable.circle_background)
+                gifModeButton.alpha = 0.5f
+                gifModeButton.background = null
+            } else {
+                gifModeButton.alpha = 1.0f
+                gifModeButton.setBackgroundResource(R.drawable.circle_background)
+                imageModeButton.alpha = 0.5f
+                imageModeButton.background = null
+            }
+        }
+
+        modeToggleContainer.setOnClickListener {
+            performKeyHaptic()
+            isMemeSearchMode = !isMemeSearchMode
+            updateToggleUI()
+            if (currentQuery.isNotEmpty()) performSearch(currentQuery)
+        }
+
+        // Forward clicks from individual buttons to the container for consistency
+        gifModeButton.setOnClickListener { modeToggleContainer.performClick() }
+        imageModeButton.setOnClickListener { modeToggleContainer.performClick() }
+        
+        // Initial state
+        updateToggleUI()
 
         gifRecycler.setItemViewCacheSize(20)
 
@@ -390,9 +466,35 @@ class GifBoardService : InputMethodService() {
             startActivity(intent)
         }
 
+        gifRecycler.setItemViewCacheSize(20)
+
+        // Infinite scroll + hide keyboard on scroll
+        gifRecycler.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                // Hide keyboard when scrolling
+                if ((dy != 0 || dx != 0) && isSearchBarActive) {
+                    deactivateSearchBar()
+                }
+
+                // Load more GIFs when near bottom
+                if (dy > 0 && !isLoadingPage && hasMorePages) {
+                    val totalItemCount = layoutManager.itemCount
+                    val lastVisiblePositions = layoutManager.findLastVisibleItemPositions(null)
+                    val lastVisiblePosition = lastVisiblePositions.maxOrNull() ?: 0
+
+                    if (lastVisiblePosition >= totalItemCount - PREFETCH_THRESHOLD) {
+                        loadMoreGifs()
+                    }
+                }
+            }
+        })
+
         // Switch keyboard button (in search bar)
         view.findViewById<ImageButton>(R.id.switch_button)?.setOnClickListener {
             performKeyHaptic()
+            // Deactivate search bar before switching to avoid focus conflicts
+            deactivateSearchBar()
+
             // Try to switch to previous IME, if not available show IME picker
             if (!switchToPreviousInputMethod()) {
                 val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
@@ -459,7 +561,12 @@ class GifBoardService : InputMethodService() {
             // Enable focus and request it
             searchInput.isFocusable = true
             searchInput.isFocusableInTouchMode = true
-            searchInput.requestFocus()
+            searchInput.showSoftInputOnFocus = false
+            
+            // Post focus request to avoid issues during layout/IME transition
+            searchInput.post {
+                searchInput.requestFocus()
+            }
 
             // Move cursor to end ONLY on initial activation
             searchInput.setSelection(searchInput.text.length)
@@ -819,8 +926,16 @@ class GifBoardService : InputMethodService() {
                 val prefs = PreferenceManager.getDefaultSharedPreferences(this@GifBoardService)
                 val safeSearch = prefs.getString("safe_search", "active") ?: "active"
 
-                val response = fetcher.fetchGifs(GoogleGifFetcher.GifSearchRequest(query, 0, safeSearch))
-                val gifItems = GifAdapter.parseGifs(response)
+                val response = if (isMemeSearchMode) {
+                    fetcher.fetchMemes(GoogleGifFetcher.GifSearchRequest(query, 0, safeSearch))
+                } else {
+                    fetcher.fetchGifs(GoogleGifFetcher.GifSearchRequest(query, 0, safeSearch))
+                }
+                val gifItems = if (isMemeSearchMode) {
+                    GifAdapter.parseMemes(response)
+                } else {
+                    GifAdapter.parseGifs(response)
+                }
 
                 withContext(Dispatchers.Main) {
                     progressBar.visibility = View.GONE
@@ -870,8 +985,16 @@ class GifBoardService : InputMethodService() {
                 val prefs = PreferenceManager.getDefaultSharedPreferences(this@GifBoardService)
                 val safeSearch = prefs.getString("safe_search", "active") ?: "active"
 
-                val response = fetcher.fetchGifs(GoogleGifFetcher.GifSearchRequest(currentQuery, currentPage, safeSearch))
-                val gifItems = GifAdapter.parseGifs(response)
+                val response = if (isMemeSearchMode) {
+                    fetcher.fetchMemes(GoogleGifFetcher.GifSearchRequest(currentQuery, currentPage, safeSearch))
+                } else {
+                    fetcher.fetchGifs(GoogleGifFetcher.GifSearchRequest(currentQuery, currentPage, safeSearch))
+                }
+                val gifItems = if (isMemeSearchMode) {
+                    GifAdapter.parseMemes(response)
+                } else {
+                    GifAdapter.parseGifs(response)
+                }
 
                 withContext(Dispatchers.Main) {
                     adapter.setLoading(false)
@@ -1003,6 +1126,52 @@ class GifBoardService : InputMethodService() {
 
     private fun commitGifUrl(url: String) {
         currentInputConnection?.commitText(url, 1)
+    }
+
+    private fun commitImage(imageUrl: String) {
+        val request = Request.Builder().url(imageUrl).build()
+        OkHttpClient().newCall(request).enqueue(object : okhttp3.Callback {
+            override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
+                Log.e(TAG, "Failed to download image", e)
+            }
+
+            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                if (!response.isSuccessful || response.body == null) {
+                    Log.e(TAG, "Failed to download image: $response")
+                    return
+                }
+
+                val imagesDir = File(cacheDir, "images")
+                if (!imagesDir.exists() && !imagesDir.mkdirs()) {
+                    Log.e(TAG, "Failed to create images directory")
+                    return
+                }
+                
+                // Determine image extension based on URL or default to png
+                val ext = when {
+                    imageUrl.contains(".jpg", ignoreCase = true) || imageUrl.contains(".jpeg", ignoreCase = true) -> "jpg"
+                    imageUrl.contains(".png", ignoreCase = true) -> "png"
+                    imageUrl.contains(".webp", ignoreCase = true) -> "webp"
+                    else -> "png"
+                }
+                
+                val file = File(imagesDir, "${System.currentTimeMillis()}.$ext")
+
+                try {
+                    response.body?.byteStream()?.use { input ->
+                        FileOutputStream(file).use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                } catch (e: java.io.IOException) {
+                    Log.e(TAG, "Failed to save image", e)
+                    return
+                }
+
+                val linkUri = Uri.parse(imageUrl)
+                window.window?.decorView?.post { doCommitContent("Image", "image/${ext.replace("jpg", "jpeg")}", file, linkUri) }
+            }
+        })
     }
 
     override fun onFinishInput() {

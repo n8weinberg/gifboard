@@ -13,6 +13,12 @@
             app:title="GIF Result Columns" />
 
         <SwitchPreference
+            app:defaultValue="true"
+            app:key="long_press_insert_image"
+            app:title="Long Press Inserts Image"
+            app:summary="Long press a GIF to insert its thumbnail image instead (inserts link)" />
+
+        <SwitchPreference
             app:defaultValue="false"
             app:key="link_on_long_press"
             app:title="Insert Link on Long Press"
@@ -49,6 +55,12 @@
             app:title="@string/pref_broken_gif_title"
             app:dependency="live_previews"
             app:useSimpleSummaryProvider="true" />
+
+        <SwitchPreference
+            app:defaultValue="false"
+            app:key="enable_meme_search"
+            app:title="Enable Meme Search"
+            app:summary="Allow searching for and inserting image memes instead of GIFs" />
 
     </androidx.preference.PreferenceCategory>
 

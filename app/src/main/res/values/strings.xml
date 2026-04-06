@@ -34,12 +34,14 @@
     <!-- Broken GIF behavior options -->
     <string-array name="broken_gif_entries">
         <item>Hide from results</item>
-        <item>Show overlay (inserts link)</item>
+        <item>Show overlay (click: insert link, long-press: insert image)</item>
+        <item>Show thumbnail image (click: insert image, long-press: insert link)</item>
     </string-array>
 
     <string-array name="broken_gif_values">
         <item>hide</item>
         <item>overlay</item>
+        <item>thumbnail</item>
     </string-array>
 
     <!-- Toast messages -->

@@ -19,7 +19,8 @@ import org.json.JSONObject
  */
 class GifAdapter(
     private val onGifClick: (String) -> Unit,
-    private val onGifLongClick: (String) -> Unit
+    private val onGifLongClick: (String) -> Unit,
+    private val onGifLongClickImage: ((imageUrl: String) -> Unit)? = null
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     companion object {
@@ -57,6 +58,48 @@ class GifAdapter(
             return items
         }
 
+        fun parseMemes(jsonResponse: String): List<GifItem> {
+            val items = mutableListOf<GifItem>()
+            try {
+                val json = JSONObject(jsonResponse)
+                val ischj = json.optJSONObject("ischj")
+                if (ischj != null) {
+                    val resultsStr = ischj.optString("results")
+                    val results = org.json.JSONArray(resultsStr)
+                    for (i in 0 until results.length()) {
+                        val gif = results.getJSONObject(i)
+                        
+                        // Check size limit (10MB max)
+                        val sizeStr = gif.optString("os")
+                        if (isSizeTooLarge(sizeStr)) continue
+
+                        val url = gif.optString("ou")
+                        
+                        // Filter out .gif files - we only want static images for memes
+                        if (url.lowercase().endsWith(".gif")) {
+                            continue
+                        }
+                        
+                        val thumbnailUrl = gif.optString("tu").takeIf { it.isNotEmpty() }
+                        
+                        // Also filter out .gif thumbnails
+                        if (thumbnailUrl?.lowercase()?.endsWith(".gif") == true) {
+                            continue
+                        }
+                        
+                        val width = gif.optInt("ow", 200)
+                        val height = gif.optInt("oh", 200)
+                        if (url.isNotEmpty() && width > 0 && height > 0) {
+                            items.add(GifItem(url, thumbnailUrl, width, height))
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            return items
+        }
+
         private fun isSizeTooLarge(sizeStr: String): Boolean {
             if (sizeStr.isEmpty()) return false
             try {
@@ -77,15 +120,18 @@ class GifAdapter(
     private var isEndOfList = false
     private var livePreviews = true
     private var insertLinkOnLongPress = false
-    private var brokenGifBehavior = "hide" // "overlay", "hide", or "nothing"
+    private var insertImageOnLongPress = true
+    private var brokenGifBehavior = "hide" // "overlay", "hide", or "thumbnail"
 
-    fun setPreferences(livePreviews: Boolean, insertLink: Boolean, brokenBehavior: String) {
+    fun setPreferences(livePreviews: Boolean, insertLink: Boolean, brokenBehavior: String, insertImage: Boolean = true) {
         val liveChanged = this.livePreviews != livePreviews
         val behaviorChanged = this.brokenGifBehavior != brokenBehavior
+        val insertImageChanged = this.insertImageOnLongPress != insertImage
         this.livePreviews = livePreviews
         this.insertLinkOnLongPress = insertLink
+        this.insertImageOnLongPress = insertImage
         this.brokenGifBehavior = brokenBehavior
-        if (liveChanged || behaviorChanged) {
+        if (liveChanged || behaviorChanged || insertImageChanged) {
             notifyDataSetChanged()
         }
     }
@@ -240,7 +286,15 @@ class GifAdapter(
                     // Only track failure if live previews enabled (otherwise we're loading thumbnail which usually works)
                     if (showLive) {
                         gifItem.isFullLoadFailed = true
-                        updateVisualState(gifItem)
+                        
+                        // Handle based on broken GIF behavior setting
+                        if (brokenGifBehavior == "thumbnail" && gifItem.thumbnailUrl != null && !gifItem.isFallbackImage) {
+                            // Use thumbnail image instead
+                            gifItem.isFallbackImage = true
+                            reloadWithFallbackImage(gifItem)
+                        } else {
+                            updateVisualState(gifItem)
+                        }
                     }
                 }
             }
@@ -260,25 +314,91 @@ class GifAdapter(
             }
 
             draweeView.controller = controllerBuilder.build()
-            itemView.setOnClickListener { onGifClick(gifItem.url) }
-            itemView.setOnLongClickListener { 
-                if (insertLinkOnLongPress) {
-                    onGifLongClick(gifItem.url)
-                    true
-                } else {
-                    false
+            
+            // Set up click listeners - behavior depends on broken GIF setting
+            itemView.setOnClickListener { 
+                when (brokenGifBehavior) {
+                    "thumbnail" -> {
+                        // Click inserts image (thumbnail)
+                        val imageUrl = gifItem.thumbnailUrl ?: gifItem.url
+                        onGifLongClickImage?.invoke(imageUrl)
+                    }
+                    "overlay" -> {
+                        // Click inserts link
+                        onGifLongClick(gifItem.url)
+                    }
+                    else -> {
+                        // "hide" or default - normal behavior
+                        if (gifItem.isFallbackImage && gifItem.thumbnailUrl != null) {
+                            onGifLongClick(gifItem.thumbnailUrl)
+                        } else {
+                            onGifClick(gifItem.url)
+                        }
+                    }
                 }
             }
+            
+            itemView.setOnLongClickListener { 
+                // Long press does the opposite of click based on broken GIF setting
+                when (brokenGifBehavior) {
+                    "thumbnail" -> {
+                        // Long-press inserts link
+                        onGifLongClick(gifItem.url)
+                    }
+                    "overlay" -> {
+                        // Long-press inserts image (thumbnail)
+                        val imageUrl = gifItem.thumbnailUrl ?: gifItem.url
+                        onGifLongClickImage?.invoke(imageUrl)
+                    }
+                    else -> {
+                        // "hide" or default - use setting-based behavior
+                        if (insertImageOnLongPress) {
+                            val imageUrl = gifItem.thumbnailUrl ?: gifItem.url
+                            onGifLongClickImage?.invoke(imageUrl)
+                        } else if (insertLinkOnLongPress) {
+                            onGifLongClick(gifItem.url)
+                        }
+                    }
+                }
+                true
+            }
+        }
+
+        private fun reloadWithFallbackImage(gifItem: GifItem) {
+            // Reload the controller with the thumbnail URL instead of the full gif
+            val fallbackUri = android.net.Uri.parse(gifItem.thumbnailUrl)
+            val fallbackBuilder = Fresco.newDraweeControllerBuilder()
+                .setUri(fallbackUri)
+                .setAutoPlayAnimations(false)
+                .setRetainImageOnFailure(true)
+                .setOldController(draweeView.controller)
+
+            draweeView.controller = fallbackBuilder.build()
+            updateVisualState(gifItem)
         }
 
         private fun updateVisualState(gifItem: GifItem) {
             val isBroken = gifItem.isFullLoadFailed && livePreviews
             
             when {
+                // If displaying fallback image, don't show overlay
+                gifItem.isFallbackImage -> {
+                    itemView.visibility = View.VISIBLE
+                    itemView.layoutParams.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                    brokenOverlay.visibility = View.GONE
+                    brokenIcon.visibility = View.GONE
+                }
                 isBroken && brokenGifBehavior == "hide" -> {
                     // Hide the item entirely
                     itemView.visibility = View.GONE
                     itemView.layoutParams.height = 0
+                    brokenOverlay.visibility = View.GONE
+                    brokenIcon.visibility = View.GONE
+                }
+                isBroken && brokenGifBehavior == "thumbnail" -> {
+                    // "thumbnail" behavior - don't show overlay, item is hidden but could load thumbnail
+                    itemView.visibility = View.VISIBLE
+                    itemView.layoutParams.height = ViewGroup.LayoutParams.WRAP_CONTENT
                     brokenOverlay.visibility = View.GONE
                     brokenIcon.visibility = View.GONE
                 }

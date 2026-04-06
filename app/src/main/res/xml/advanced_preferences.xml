@@ -2,6 +2,16 @@
 <androidx.preference.PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
+    <androidx.preference.PreferenceCategory app:title="Search Features">
+
+        <SwitchPreference
+            app:defaultValue="false"
+            app:key="enable_meme_search"
+            app:title="Enable Meme Search"
+            app:summary="Toggle to search for memes (images only) instead of GIFs" />
+
+    </androidx.preference.PreferenceCategory>
+
     <androidx.preference.PreferenceCategory app:title="Content Filtering">
 
         <ListPreference
