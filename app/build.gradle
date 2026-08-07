@@ -17,10 +17,14 @@ android {
 
     signingConfigs {
         release {
-            storeFile = file(System.getenv("KEYSTORE_FILE") ?: (project.findProperty('RELEASE_STORE_FILE') ?: "gifboard-release.jks"))
-            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: project.findProperty('RELEASE_STORE_PASSWORD')
-            keyAlias = System.getenv("KEY_ALIAS") ?: project.findProperty('RELEASE_KEY_ALIAS')
-            keyPassword = System.getenv("KEY_PASSWORD") ?: project.findProperty('RELEASE_KEY_PASSWORD')
+            // Only set storeFile if the file actually exists, otherwise keep it null so Gradle skips validation
+            def storePath = System.getenv("KEYSTORE_FILE") ?: project.findProperty('RELEASE_STORE_FILE')
+            if (storePath && file(storePath).exists()) {
+                storeFile = file(storePath)
+                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: project.findProperty('RELEASE_STORE_PASSWORD')
+                keyAlias = System.getenv("KEY_ALIAS") ?: project.findProperty('RELEASE_KEY_ALIAS')
+                keyPassword = System.getenv("KEY_PASSWORD") ?: project.findProperty('RELEASE_KEY_PASSWORD')
+            }
         }
     }
 
