@@ -7,7 +7,9 @@ data class GifItem(
     val url: String,
     val thumbnailUrl: String?,
     val width: Int,
-    val height: Int
+    val height: Int,
+    val title: String? = null,
+    val subtitle: String? = null
 ) {
     val aspectRatio: Float
         get() = if (height > 0) width.toFloat() / height.toFloat() else 1f

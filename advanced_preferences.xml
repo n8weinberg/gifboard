@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.preference.PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <!-- GIF Display Settings -->
+    <PreferenceCategory app:title="GIF Display Settings">
+
+        <!-- Enable/Disable GIFs entirely -->
+        <SwitchPreferenceCompat
+            app:key="enable_gifs"
+            app:title="Enable GIFs"
+            app:defaultValue="true"
+            app:summary="Show animated GIFs instead of images only" />
+
+        <!-- Toggle for inserting GIF links on long press -->
+        <SwitchPreferenceCompat
+            app:key="insert_link_on_long_press"
+            app:title="Insert GIF Link on Long Press"
+            app:defaultValue="false"
+            app:summary="Long-press to get the GIF URL instead of inserting it" />
+
+        <!-- Toggle for inserting image (thumbnail) on long press -->
+        <SwitchPreferenceCompat
+            app:key="insert_image_on_long_press"
+            app:title="Insert Image on Long Press"
+            app:defaultValue="true"
+            app:summary="Long-press to insert the static image version" />
+
+        <!-- Dropdown for handling broken GIFs -->
+        <ListPreference
+            app:key="broken_gif_behavior"
+            app:title="Broken GIF Behavior"
+            app:entries="@array/broken_gif_entries"
+            app:entryValues="@array/broken_gif_values"
+            app:defaultValue="hide"
+            app:summary="%s"
+            app:useSimpleSummaryProvider="true"
+            app:negativeButtonText="Reset" />
+
+        <!-- Toggle for live preview animations -->
+        <SwitchPreferenceCompat
+            app:key="live_previews"
+            app:title="Live Previews"
+            app:defaultValue="false"
+            app:summary="Play GIF animations in the selection menu" />
+
+    </PreferenceCategory>
+
+    <!-- General Settings -->
+    <PreferenceCategory app:title="General Settings">
+
+        <!-- Safe Search Level -->
+        <ListPreference
+            app:key="safe_search"
+            app:title="SafeSearch Level"
+            app:entries="@array/safe_search_entries"
+            app:entryValues="@array/safe_search_values"
+            app:defaultValue="active"
+            app:useSimpleSummaryProvider="true" />
+
+    </PreferenceCategory>
+
+</androidx.preference.PreferenceScreen>

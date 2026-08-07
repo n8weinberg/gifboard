@@ -2,24 +2,24 @@
 <androidx.preference.PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
-    <androidx.preference.PreferenceCategory app:title="Search Features">
+    <androidx.preference.PreferenceCategory android:title="Search Features">
 
         <SwitchPreference
             app:defaultValue="false"
             app:key="enable_meme_search"
-            app:title="Enable Meme Search"
-            app:summary="Toggle to search for memes (images only) instead of GIFs" />
+            android:title="Enable Meme Search"
+            android:summary="Toggle to search for memes (images only) instead of GIFs" />
 
     </androidx.preference.PreferenceCategory>
 
-    <androidx.preference.PreferenceCategory app:title="Content Filtering">
+    <androidx.preference.PreferenceCategory android:title="Content Filtering">
 
         <ListPreference
             app:defaultValue="active"
-            app:entries="@array/safe_search_entries"
-            app:entryValues="@array/safe_search_values"
+            android:entries="@array/safe_search_entries"
+            android:entryValues="@array/safe_search_values"
             app:key="safe_search"
-            app:title="SafeSearch Level"
+            android:title="SafeSearch Level"
             app:useSimpleSummaryProvider="true" />
 
     </androidx.preference.PreferenceCategory>

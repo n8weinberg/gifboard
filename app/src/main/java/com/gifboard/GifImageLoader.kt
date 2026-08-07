@@ -24,6 +24,14 @@ object GifImageLoader {
             val okHttpClient = OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(10, TimeUnit.SECONDS)
+                .cookieJar(WebviewCookieJar())
+                .addInterceptor { chain ->
+                    val request = chain.request().newBuilder()
+                        .header("User-Agent", "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36")
+                        .header("Referer", "https://yarn.co/")
+                        .build()
+                    chain.proceed(request)
+                }
                 .build()
             
             val config = OkHttpImagePipelineConfigFactory

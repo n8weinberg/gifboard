@@ -13,39 +13,75 @@
         android:foreground="?android:attr/selectableItemBackground"
         app:cardCornerRadius="8dp"
         app:cardElevation="0dp"
-        app:cardBackgroundColor="@android:color/transparent"
+        app:cardBackgroundColor="#1A1A1A"
         android:layout_margin="2dp">
 
-        <FrameLayout
+        <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content">
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
 
-            <com.gifboard.AspectRatioDraweeView
-                android:id="@+id/gif_image"
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <com.gifboard.AspectRatioDraweeView
+                    android:id="@+id/gif_image"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:contentDescription="GIF"
+                    fresco:fadeDuration="200"
+                    fresco:actualImageScaleType="fitCenter"/>
+
+                <!-- Overlay for broken GIFs (initially hidden) -->
+                <View
+                    android:id="@+id/broken_overlay"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="#80000000"
+                    android:visibility="gone"/>
+
+                <ImageView
+                    android:id="@+id/broken_icon"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_link"
+                    android:contentDescription="Link only"
+                    android:visibility="gone"/>
+            </FrameLayout>
+
+            <!-- Metadata Footer for results -->
+            <LinearLayout
+                android:id="@+id/metadata_overlay"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:contentDescription="GIF"
-                fresco:fadeDuration="200"
-                fresco:actualImageScaleType="fitCenter"/>
+                android:orientation="vertical"
+                android:paddingHorizontal="4dp"
+                android:paddingVertical="2dp"
+                android:visibility="gone">
 
-            <!-- Overlay for broken GIFs (initially hidden) -->
-            <View
-                android:id="@+id/broken_overlay"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:background="#80000000"
-                android:visibility="gone"/>
+                <TextView
+                    android:id="@+id/gif_title"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:textColor="#FFFFFF"
+                    android:textSize="9sp"
+                    android:textStyle="bold"/>
 
-            <ImageView
-                android:id="@+id/broken_icon"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:layout_gravity="center"
-                android:src="@drawable/ic_link"
-                android:contentDescription="Link only"
-                android:visibility="gone"/>
+                <TextView
+                    android:id="@+id/gif_subtitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:textColor="#AAAAAA"
+                    android:textSize="8sp"/>
+            </LinearLayout>
 
-        </FrameLayout>
+        </LinearLayout>
 
     </androidx.cardview.widget.CardView>
 

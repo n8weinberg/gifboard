@@ -50,18 +50,15 @@ android {
     kotlinOptions {
         jvmTarget = '11'
     }
+    packagingOptions {
+        jniLibs {
+            keepDebugSymbols += ['**/*.so']
+        }
+    }
 
     // Reproducibility fixes
 
-    aaptOptions {
-        // Disable PNG crunching for reproducible builds
-        cruncherEnabled = false
-    }
 
-    packagingOptions {
-        // Don't strip native libs to avoid reproducibility issues
-        doNotStrip '**/*.so'
-    }
 }
 
 dependencies {
@@ -73,6 +70,7 @@ dependencies {
     implementation 'androidx.cardview:cardview:1.0.0'
     
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'org.jsoup:jsoup:1.17.2'
     
     implementation 'com.facebook.fresco:fresco:3.6.0'
     implementation 'com.facebook.fresco:animated-gif:3.6.0'

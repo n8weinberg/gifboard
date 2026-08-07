@@ -20,6 +20,7 @@ import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ProgressBar
 import android.widget.TextView
+import androidx.annotation.RequiresApi
 import androidx.core.content.FileProvider
 import androidx.core.view.inputmethod.InputConnectionCompat
 import androidx.core.view.inputmethod.InputContentInfoCompat
@@ -30,6 +31,9 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import androidx.preference.PreferenceManager
 import com.facebook.drawee.backends.pipeline.Fresco
+import com.facebook.imagepipeline.backends.okhttp3.OkHttpImagePipelineConfigFactory
+import okhttp3.Interceptor
+import okhttp3.Response
 import java.io.File
 import java.io.FileOutputStream
 
@@ -88,15 +92,19 @@ class GifBoardService : InputMethodService() {
 
     private lateinit var adapter: GifAdapter
     private val fetcher = GoogleGifFetcher()
+    private val klipyFetcher = KlipyGifFetcher()
     
-    // Meme search mode
-    private var isMemeSearchMode = false
+    // Mode state
+    private enum class SearchMode { GIF, IMAGE, YARN }
+    private var currentSearchMode = SearchMode.GIF
     private lateinit var gifModeButton: ImageButton
     private lateinit var imageModeButton: ImageButton
+    private lateinit var yarnModeButton: ImageButton
     private lateinit var modeToggleContainer: View
+    private lateinit var yarnScraper: GetYarnScraper
 
     // Backspace repeat handling
-    private val backspaceHandler = Handler(Looper.getMainLooper())
+    private val handler = Handler(Looper.getMainLooper())
     private var backspaceRunnable: Runnable? = null
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
@@ -105,6 +113,7 @@ class GifBoardService : InputMethodService() {
     private var isLoadingPage = false
     private var hasMorePages = true
     private var searchJob: Job? = null
+    private var retryCount = 0
 
     // Vibration
     private var vibrator: Vibrator? = null
@@ -114,6 +123,11 @@ class GifBoardService : InputMethodService() {
         super.onCreate()
         GifImageLoader.initialize(this)
         historyDb = SearchHistoryDbHelper(this)
+        yarnScraper = GetYarnScraper(this)
+
+        // Initialize default preferences
+        PreferenceManager.setDefaultValues(this, R.xml.preferences, false)
+        PreferenceManager.setDefaultValues(this, R.xml.advanced_preferences, false)
 
         // Initialize vibrator
         vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -210,12 +224,59 @@ class GifBoardService : InputMethodService() {
               adapter.setPreferences(livePreviews, insertLink, brokenBehavior, insertImage)
 
               vibrationStrength = prefs.getString("vibration_strength", "medium") ?: "medium"
+              
+              // Refresh meme mode visibility and state from settings
+              updateMemeModeToggleVisibility()
          }
 
         // Ensure we don't start with an active search bar focus to avoid conflicts
         // when switching into this IME
         if (::searchInput.isInitialized) {
             deactivateSearchBar()
+        }
+    }
+
+    private fun updateMemeModeToggleVisibility() {
+        if (!::modeToggleContainer.isInitialized) return
+        val prefs = PreferenceManager.getDefaultSharedPreferences(this)
+        val memeSearchEnabled = prefs.getBoolean("enable_meme_search", false)
+        modeToggleContainer.visibility = if (memeSearchEnabled) View.VISIBLE else View.GONE
+        
+        // If feature was disabled while in meme/yarn mode, switch back to GIF mode
+        if (!memeSearchEnabled && currentSearchMode != SearchMode.GIF) {
+            currentSearchMode = SearchMode.GIF
+        }
+        updateToggleUI()
+    }
+
+    private fun updateToggleUI() {
+        if (!::gifModeButton.isInitialized || !::imageModeButton.isInitialized || !::yarnModeButton.isInitialized) return
+
+        // Reset all
+        gifModeButton.alpha = 0.5f
+        gifModeButton.background = null
+        imageModeButton.alpha = 0.5f
+        imageModeButton.background = null
+        yarnModeButton.alpha = 0.5f
+        yarnModeButton.background = null
+
+        // Highlight current
+        when (currentSearchMode) {
+            SearchMode.GIF -> {
+                gifModeButton.alpha = 1.0f
+                gifModeButton.setBackgroundResource(R.drawable.circle_background)
+                searchInput.hint = "Search GIFs..."
+            }
+            SearchMode.IMAGE -> {
+                imageModeButton.alpha = 1.0f
+                imageModeButton.setBackgroundResource(R.drawable.circle_background)
+                searchInput.hint = "Search Memes..."
+            }
+            SearchMode.YARN -> {
+                yarnModeButton.alpha = 1.0f
+                yarnModeButton.setBackgroundResource(R.drawable.circle_background)
+                searchInput.hint = "Search TV/Movies..."
+            }
         }
     }
 
@@ -232,26 +293,43 @@ class GifBoardService : InputMethodService() {
         }
     }
 
+    @RequiresApi(Build.VERSION_CODES.P)
     override fun onCreateInputView(): View {
         val view = layoutInflater.inflate(R.layout.input_view, null)
         rootView = view
 
         searchInput = view.findViewById(R.id.search_input)
         searchInput.showSoftInputOnFocus = false
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            searchInput.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
-        }
+        searchInput.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
         searchInput.inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
 
 
         clearButton = view.findViewById(R.id.clear_button)
         searchButton = view.findViewById(R.id.key_search)
         settingsButton = view.findViewById(R.id.settings_button)
+
+        clearButton.setOnClickListener {
+            performKeyHaptic()
+            searchInput.setText("")
+            activateSearchBar()
+        }
+
+        settingsButton.setOnClickListener {
+            performClickHaptic()
+            val intent = Intent(this, SettingsActivity::class.java)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+        }
         gifModeButton = view.findViewById(R.id.gif_mode_button)
         imageModeButton = view.findViewById(R.id.image_mode_button)
+        yarnModeButton = view.findViewById(R.id.yarn_mode_button)
         modeToggleContainer = view.findViewById(R.id.mode_toggle_container)
         progressBar = view.findViewById(R.id.progress_bar)
         gifRecycler = view.findViewById(R.id.gif_recycler)
+        
+        // Give the scraper a parent to attach the hidden WebView to.
+        // This helps bypass "headless" detection by making the WebView part of the active UI.
+        yarnScraper.attach(view.findViewById(R.id.content_area) as? android.view.ViewGroup)
         shiftButton = view.findViewById(R.id.key_shift)
         symbolsButton = view.findViewById(R.id.key_symbols)
 
@@ -351,7 +429,11 @@ class GifBoardService : InputMethodService() {
         adapter = GifAdapter(
             onGifClick = { url ->
                 performClickHaptic()
-                commitGif(url)
+                // Use the search mode to decide insertion type, as URLs don't always have extensions
+                when (currentSearchMode) {
+                    SearchMode.IMAGE -> commitImage(url)
+                    else -> commitGif(url)
+                }
             },
             onGifLongClick = { url ->
                 performHeavyHaptic()
@@ -375,30 +457,16 @@ class GifBoardService : InputMethodService() {
         val brokenBehavior = prefs.getString("broken_gif_behavior", "hide") ?: "hide"
         adapter.setPreferences(livePreviews, insertLink, brokenBehavior, insertImage)
 
-        // Check if meme search is enabled
-        isMemeSearchMode = false
-        
-        // Configure meme toggle buttons - only visible if meme search feature is enabled
-        val memeSearchEnabled = prefs.getBoolean("enable_meme_search", false)
-        modeToggleContainer.visibility = if (memeSearchEnabled) View.VISIBLE else View.GONE
-        
-        fun updateToggleUI() {
-            if (isMemeSearchMode) {
-                imageModeButton.alpha = 1.0f
-                imageModeButton.setBackgroundResource(R.drawable.circle_background)
-                gifModeButton.alpha = 0.5f
-                gifModeButton.background = null
-            } else {
-                gifModeButton.alpha = 1.0f
-                gifModeButton.setBackgroundResource(R.drawable.circle_background)
-                imageModeButton.alpha = 0.5f
-                imageModeButton.background = null
-            }
-        }
+        // Configure meme toggle buttons
+        updateMemeModeToggleVisibility()
 
         modeToggleContainer.setOnClickListener {
             performKeyHaptic()
-            isMemeSearchMode = !isMemeSearchMode
+            currentSearchMode = when (currentSearchMode) {
+                SearchMode.GIF -> SearchMode.IMAGE
+                SearchMode.IMAGE -> SearchMode.YARN
+                SearchMode.YARN -> SearchMode.GIF
+            }
             updateToggleUI()
             if (currentQuery.isNotEmpty()) performSearch(currentQuery)
         }
@@ -406,65 +474,10 @@ class GifBoardService : InputMethodService() {
         // Forward clicks from individual buttons to the container for consistency
         gifModeButton.setOnClickListener { modeToggleContainer.performClick() }
         imageModeButton.setOnClickListener { modeToggleContainer.performClick() }
+        yarnModeButton.setOnClickListener { modeToggleContainer.performClick() }
         
         // Initial state
         updateToggleUI()
-
-        gifRecycler.setItemViewCacheSize(20)
-
-        // Infinite scroll + hide keyboard on scroll
-        gifRecycler.addOnScrollListener(object : RecyclerView.OnScrollListener() {
-            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
-                // Hide keyboard when scrolling
-                if ((dy != 0 || dx != 0) && isSearchBarActive) {
-                    deactivateSearchBar()
-                }
-
-                // Load more GIFs when near bottom
-                if (dy > 0 && !isLoadingPage && hasMorePages) {
-                    val totalItemCount = layoutManager.itemCount
-                    val lastVisiblePositions = layoutManager.findLastVisibleItemPositions(null)
-                    val lastVisiblePosition = lastVisiblePositions.maxOrNull() ?: 0
-
-                    if (lastVisiblePosition >= totalItemCount - PREFETCH_THRESHOLD) {
-                        loadMoreGifs()
-                    }
-                }
-            }
-        })
-
-        // Search input text watcher - toggle history/GIF visibility
-        searchInput.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) {
-                clearButton.visibility = if (s.isNullOrEmpty()) View.GONE else View.VISIBLE
-                updateHistoryVisibility()
-            }
-        })
-
-        // Clear button
-        clearButton.setOnClickListener {
-            performKeyHaptic()
-            searchInput.text.clear()
-            adapter.clearGifs()
-            currentQuery = ""
-            updateHistoryVisibility()
-        }
-
-        // Search button
-        searchButton.setOnClickListener {
-            performKeyHaptic()
-            performSearch(searchInput.text.toString())
-        }
-
-        // Settings button
-        settingsButton.setOnClickListener {
-            performKeyHaptic()
-            val intent = Intent(this, SettingsActivity::class.java)
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            startActivity(intent)
-        }
 
         gifRecycler.setItemViewCacheSize(20)
 
@@ -543,6 +556,27 @@ class GifBoardService : InputMethodService() {
 
         // Initial history visibility
         updateHistoryVisibility()
+
+        searchInput.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                updateHistoryVisibility()
+                clearButton.visibility = if (s.isNullOrEmpty()) View.GONE else View.VISIBLE
+            }
+        })
+
+        searchInput.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH ||
+                actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE ||
+                actionId == android.view.inputmethod.EditorInfo.IME_NULL) {
+                performClickHaptic()
+                performSearch(searchInput.text.toString())
+                true
+            } else {
+                false
+            }
+        }
 
         // Start with keyboard hidden
         deactivateSearchBar()
@@ -817,21 +851,27 @@ class GifBoardService : InputMethodService() {
                         override fun run() {
                             performKeyHaptic()
                             deleteCharacter()
-                            backspaceHandler.postDelayed(this, 50) // Repeat every 50ms
+                            handler.postDelayed(this, 50) // Repeat every 50ms
                         }
                     }
-                    backspaceHandler.postDelayed(backspaceRunnable!!, 500) // Initial delay 500ms
+                    handler.postDelayed(backspaceRunnable!!, 500) // Initial delay 500ms
                 }
                 android.view.MotionEvent.ACTION_UP,
                 android.view.MotionEvent.ACTION_CANCEL,
                 android.view.MotionEvent.ACTION_POINTER_UP -> {
                     v.isPressed = false
                     // Stop repeating
-                    backspaceRunnable?.let { backspaceHandler.removeCallbacks(it) }
+                    backspaceRunnable?.let { handler.removeCallbacks(it) }
                     backspaceRunnable = null
                 }
             }
             true
+        }
+
+        // Search key
+        searchButton.setKeyTouchListener {
+            performClickHaptic()
+            performSearch(searchInput.text.toString())
         }
 
         // Initialize display
@@ -921,37 +961,52 @@ class GifBoardService : InputMethodService() {
         // Notify tutorial
         TutorialEventBus.emit(TutorialEvent.SearchPerformed)
 
+        // Ensure we're showing results area
+        historyContainer.visibility = View.GONE
+        gifRecycler.visibility = View.VISIBLE
+
         searchJob = scope.launch(Dispatchers.IO) {
             try {
                 val prefs = PreferenceManager.getDefaultSharedPreferences(this@GifBoardService)
                 val safeSearch = prefs.getString("safe_search", "active") ?: "active"
+                val klipyApiKey = prefs.getString("klipy_api_key", "") ?: ""
 
-                val response = if (isMemeSearchMode) {
-                    fetcher.fetchMemes(GoogleGifFetcher.GifSearchRequest(query, 0, safeSearch))
-                } else {
-                    fetcher.fetchGifs(GoogleGifFetcher.GifSearchRequest(query, 0, safeSearch))
-                }
-                val gifItems = if (isMemeSearchMode) {
-                    GifAdapter.parseMemes(response)
-                } else {
-                    GifAdapter.parseGifs(response)
-                }
-
-                withContext(Dispatchers.Main) {
-                    progressBar.visibility = View.GONE
-                    isLoadingPage = false
-
-                    if (gifItems.isEmpty()) {
-                        hasMorePages = false
-                        adapter.setEndOfList(true)
-                    } else {
-                        currentPage = 1
-                        adapter.setGifs(gifItems)
-
-                        // Auto-prefetch if content doesn't fill the view (can't scroll)
-                        gifRecycler.post {
-                            checkAndPrefetchIfNeeded()
+                when (currentSearchMode) {
+                    SearchMode.GIF -> {
+                        if (klipyApiKey.isNotBlank()) {
+                            val klipySafeSearch = when (safeSearch) {
+                                "active" -> "high"
+                                "medium" -> "medium"
+                                else -> "off"
+                            }
+                            val response = klipyFetcher.fetchGifs(KlipyGifFetcher.KlipySearchRequest(
+                                appKey = klipyApiKey,
+                                query = query,
+                                page = 1,
+                                contentFilter = klipySafeSearch
+                            ))
+                            val gifItems = GifAdapter.parseKlipyGifs(response)
+                            withContext(Dispatchers.Main) {
+                                handleSearchResults(gifItems)
+                            }
+                        } else {
+                            val response = fetcher.fetchGifs(GoogleGifFetcher.GifSearchRequest(query, 0, safeSearch))
+                            val gifItems = GifAdapter.parseGifs(response)
+                            withContext(Dispatchers.Main) {
+                                handleSearchResults(gifItems)
+                            }
                         }
+                    }
+                    SearchMode.IMAGE -> {
+                        val response = fetcher.fetchMemes(GoogleGifFetcher.GifSearchRequest(query, 0, safeSearch))
+                        val gifItems = GifAdapter.parseMemes(response)
+                        withContext(Dispatchers.Main) {
+                            handleSearchResults(gifItems)
+                        }
+                    }
+                    SearchMode.YARN -> {
+                        retryCount = 0
+                        performYarnSearch(query, 0)
                     }
                 }
             } catch (e: Exception) {
@@ -960,6 +1015,82 @@ class GifBoardService : InputMethodService() {
                     progressBar.visibility = View.GONE
                     isLoadingPage = false
                 }
+            }
+        }
+    }
+
+    private fun performYarnSearch(query: String, page: Int) {
+        yarnScraper.searchGifs(query, page, object : GetYarnScraper.OnSearchListener {
+            override fun onSearchSuccess(clips: List<YarnClip>, hasMore: Boolean) {
+                val gifItems = clips.map { clip ->
+                    GifItem(
+                        url = clip.gifUrl,
+                        thumbnailUrl = clip.thumbnailUrl,
+                        width = 400,
+                        height = 300,
+                        title = clip.title,
+                        subtitle = clip.subtitle
+                    )
+                }
+                handler.post {
+                    adapter.setLoading(false)
+                    if (page == 0) {
+                        hasMorePages = hasMore
+                        handleSearchResults(gifItems)
+                    } else {
+                        progressBar.visibility = View.GONE
+                        isLoadingPage = false
+                        if (gifItems.isEmpty()) {
+                            hasMorePages = false
+                            adapter.setEndOfList(true)
+                        } else {
+                            // Increment page for next load
+                            currentPage++
+                            adapter.addGifs(gifItems)
+                            
+                            hasMorePages = hasMore
+                            if (!hasMorePages) adapter.setEndOfList(true)
+
+                            gifRecycler.post { checkAndPrefetchIfNeeded() }
+                        }
+                    }
+                }
+            }
+
+            override fun onSearchError(error: String) {
+                Log.e(TAG, "Yarn search failed (Page $page): $error")
+                handler.post {
+                    if (error.contains("Cloudflare", ignoreCase = true) && retryCount < 2) {
+                        retryCount++
+                        Log.d(TAG, "Retrying Yarn search ($retryCount)...")
+                        handler.postDelayed({ performYarnSearch(query, page) }, 2000)
+                    } else {
+                        progressBar.visibility = View.GONE
+                        adapter.setLoading(false)
+                        isLoadingPage = false
+                        if (error.contains("Cloudflare", ignoreCase = true)) {
+                            android.widget.Toast.makeText(this@GifBoardService, "Cloudflare challenge failed", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    private fun handleSearchResults(gifItems: List<GifItem>) {
+        progressBar.visibility = View.GONE
+        isLoadingPage = false
+
+        if (gifItems.isEmpty()) {
+            hasMorePages = false
+            adapter.setEndOfList(true)
+        } else {
+            currentPage = 1
+            adapter.setGifs(gifItems)
+
+            // Auto-prefetch if content doesn't fill the view (can't scroll)
+            gifRecycler.post {
+                checkAndPrefetchIfNeeded()
             }
         }
     }
@@ -984,16 +1115,36 @@ class GifBoardService : InputMethodService() {
             try {
                 val prefs = PreferenceManager.getDefaultSharedPreferences(this@GifBoardService)
                 val safeSearch = prefs.getString("safe_search", "active") ?: "active"
+                val klipyApiKey = prefs.getString("klipy_api_key", "") ?: ""
 
-                val response = if (isMemeSearchMode) {
-                    fetcher.fetchMemes(GoogleGifFetcher.GifSearchRequest(currentQuery, currentPage, safeSearch))
-                } else {
-                    fetcher.fetchGifs(GoogleGifFetcher.GifSearchRequest(currentQuery, currentPage, safeSearch))
-                }
-                val gifItems = if (isMemeSearchMode) {
-                    GifAdapter.parseMemes(response)
-                } else {
-                    GifAdapter.parseGifs(response)
+                val gifItems = when (currentSearchMode) {
+                    SearchMode.GIF -> {
+                        if (klipyApiKey.isNotBlank()) {
+                            val klipySafeSearch = when (safeSearch) {
+                                "active" -> "high"
+                                "medium" -> "medium"
+                                else -> "off"
+                            }
+                            val response = klipyFetcher.fetchGifs(KlipyGifFetcher.KlipySearchRequest(
+                                appKey = klipyApiKey,
+                                query = currentQuery,
+                                page = currentPage + 1, // Klipy uses 1-based pagination
+                                contentFilter = klipySafeSearch
+                            ))
+                            GifAdapter.parseKlipyGifs(response)
+                        } else {
+                            val response = fetcher.fetchGifs(GoogleGifFetcher.GifSearchRequest(currentQuery, currentPage, safeSearch))
+                            GifAdapter.parseGifs(response)
+                        }
+                    }
+                    SearchMode.IMAGE -> {
+                        val response = fetcher.fetchMemes(GoogleGifFetcher.GifSearchRequest(currentQuery, currentPage, safeSearch))
+                        GifAdapter.parseMemes(response)
+                    }
+                    SearchMode.YARN -> {
+                        performYarnSearch(currentQuery, currentPage)
+                        return@launch
+                    }
                 }
 
                 withContext(Dispatchers.Main) {
@@ -1024,9 +1175,22 @@ class GifBoardService : InputMethodService() {
         }
     }
 
+    private val httpClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .cookieJar(WebviewCookieJar())
+            .addInterceptor { chain ->
+                val request = chain.request().newBuilder()
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36")
+                    .header("Referer", "https://yarn.co/")
+                    .build()
+                chain.proceed(request)
+            }
+            .build()
+    }
+
     private fun commitGif(contentUri: String) {
         val request = Request.Builder().url(contentUri).build()
-        OkHttpClient().newCall(request).enqueue(object : okhttp3.Callback {
+        httpClient.newCall(request).enqueue(object : okhttp3.Callback {
             override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
                 Log.e(TAG, "Failed to download GIF", e)
                 window.window?.decorView?.post { handleDownloadFailure(contentUri) }
@@ -1130,7 +1294,7 @@ class GifBoardService : InputMethodService() {
 
     private fun commitImage(imageUrl: String) {
         val request = Request.Builder().url(imageUrl).build()
-        OkHttpClient().newCall(request).enqueue(object : okhttp3.Callback {
+        httpClient.newCall(request).enqueue(object : okhttp3.Callback {
             override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
                 Log.e(TAG, "Failed to download image", e)
             }
@@ -1152,6 +1316,7 @@ class GifBoardService : InputMethodService() {
                     imageUrl.contains(".jpg", ignoreCase = true) || imageUrl.contains(".jpeg", ignoreCase = true) -> "jpg"
                     imageUrl.contains(".png", ignoreCase = true) -> "png"
                     imageUrl.contains(".webp", ignoreCase = true) -> "webp"
+                    imageUrl.contains(".gif", ignoreCase = true) -> "gif"
                     else -> "png"
                 }
                 
@@ -1169,7 +1334,13 @@ class GifBoardService : InputMethodService() {
                 }
 
                 val linkUri = Uri.parse(imageUrl)
-                window.window?.decorView?.post { doCommitContent("Image", "image/${ext.replace("jpg", "jpeg")}", file, linkUri) }
+                val mimeType = when (ext) {
+                    "jpg" -> "image/jpeg"
+                    "gif" -> "image/gif"
+                    "webp" -> "image/webp"
+                    else -> "image/png"
+                }
+                window.window?.decorView?.post { doCommitContent("Image", mimeType, file, linkUri) }
             }
         })
     }
@@ -1193,5 +1364,8 @@ class GifBoardService : InputMethodService() {
     override fun onDestroy() {
         super.onDestroy()
         scope.cancel()
+        yarnScraper.destroy()
+        // Ensure any pending scraper work or webviews are cleaned up
+        handler.removeCallbacksAndMessages(null)
     }
 }

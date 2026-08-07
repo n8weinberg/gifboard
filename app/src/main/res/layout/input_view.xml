@@ -58,6 +58,17 @@
                 android:scaleType="fitCenter"
                 android:alpha="0.5"
                 android:contentDescription="Image Search Mode" />
+
+            <ImageButton
+                android:id="@+id/yarn_mode_button"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
+                android:background="@null"
+                android:padding="4dp"
+                android:src="@drawable/ic_tv"
+                android:scaleType="fitCenter"
+                android:alpha="0.5"
+                android:contentDescription="TV/Movie Search Mode" />
         </LinearLayout>
 
         <FrameLayout

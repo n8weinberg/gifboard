@@ -31,7 +31,17 @@ class GifAdapter(
         fun parseGifs(jsonResponse: String): List<GifItem> {
             val items = mutableListOf<GifItem>()
             try {
-                val json = JSONObject(jsonResponse)
+                var jsonStr = jsonResponse
+                if (jsonStr.startsWith(")]}'")) {
+                    jsonStr = jsonStr.substring(4).trim()
+                }
+                
+                // If it starts with < !DOCTYPE, it's HTML, not JSON
+                if (jsonStr.trim().startsWith("<!DOCTYPE")) {
+                    return emptyList()
+                }
+
+                val json = JSONObject(jsonStr)
                 val ischj = json.optJSONObject("ischj")
                 if (ischj != null) {
                     val resultsStr = ischj.optString("results")
@@ -61,7 +71,17 @@ class GifAdapter(
         fun parseMemes(jsonResponse: String): List<GifItem> {
             val items = mutableListOf<GifItem>()
             try {
-                val json = JSONObject(jsonResponse)
+                var jsonStr = jsonResponse
+                if (jsonStr.startsWith(")]}'")) {
+                    jsonStr = jsonStr.substring(4).trim()
+                }
+
+                // If it starts with < !DOCTYPE, it's HTML, not JSON
+                if (jsonStr.trim().startsWith("<!DOCTYPE")) {
+                    return emptyList()
+                }
+
+                val json = JSONObject(jsonStr)
                 val ischj = json.optJSONObject("ischj")
                 if (ischj != null) {
                     val resultsStr = ischj.optString("results")
@@ -92,6 +112,53 @@ class GifAdapter(
                         if (url.isNotEmpty() && width > 0 && height > 0) {
                             items.add(GifItem(url, thumbnailUrl, width, height))
                         }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            return items
+        }
+
+        fun parseKlipyGifs(jsonResponse: String): List<GifItem> {
+            val items = mutableListOf<GifItem>()
+            try {
+                val json = JSONObject(jsonResponse)
+                if (!json.optBoolean("result", false)) return emptyList()
+                
+                val dataObj = json.optJSONObject("data") ?: return emptyList()
+                val dataArray = dataObj.optJSONArray("data") ?: return emptyList()
+                
+                for (i in 0 until dataArray.length()) {
+                    val item = dataArray.getJSONObject(i)
+                    val file = item.optJSONObject("file") ?: continue
+                    
+                    // Prefer HD for main GIF, but check size
+                    val hd = file.optJSONObject("hd")?.optJSONObject("gif")
+                    val md = file.optJSONObject("md")?.optJSONObject("gif")
+                    
+                    // Select best GIF based on size (prefer HD if < 10MB, else MD)
+                    val selectedGif = when {
+                        hd != null && hd.optLong("size", 0) < 10 * 1024 * 1024 -> hd
+                        md != null -> md
+                        else -> hd ?: md
+                    }
+                    
+                    val url = selectedGif?.optString("url") ?: continue
+                    
+                    // For thumbnail/static image, prefer SM JPG, then WEBP, then GIF
+                    val smObj = file.optJSONObject("sm")
+                    val thumbnail = smObj?.optJSONObject("jpg") 
+                        ?: smObj?.optJSONObject("webp") 
+                        ?: smObj?.optJSONObject("gif")
+                    
+                    val thumbnailUrl = thumbnail?.optString("url")
+                    val width = selectedGif.optInt("width", 200)
+                    val height = selectedGif.optInt("height", 200)
+                    val title = item.optString("title")
+                    
+                    if (url.isNotEmpty()) {
+                        items.add(GifItem(url, thumbnailUrl, width, height, title = title))
                     }
                 }
             } catch (e: Exception) {
@@ -251,6 +318,9 @@ class GifAdapter(
         private val draweeView: AspectRatioDraweeView = itemView.findViewById(R.id.gif_image)
         private val brokenOverlay: View = itemView.findViewById(R.id.broken_overlay)
         private val brokenIcon: ImageView = itemView.findViewById(R.id.broken_icon)
+        private val metadataOverlay: View = itemView.findViewById(R.id.metadata_overlay)
+        private val titleView: android.widget.TextView = itemView.findViewById(R.id.gif_title)
+        private val subtitleView: android.widget.TextView = itemView.findViewById(R.id.gif_subtitle)
 
         fun bind(gifItem: GifItem) {
             // Show item (might be hidden from previous bind)
@@ -258,6 +328,15 @@ class GifAdapter(
             itemView.layoutParams.height = ViewGroup.LayoutParams.WRAP_CONTENT
             
             draweeView.setGifAspectRatio(gifItem.aspectRatio)
+
+            // Update metadata
+            if (!gifItem.title.isNullOrBlank() || !gifItem.subtitle.isNullOrBlank()) {
+                metadataOverlay.visibility = View.VISIBLE
+                titleView.text = gifItem.title ?: ""
+                subtitleView.text = gifItem.subtitle ?: ""
+            } else {
+                metadataOverlay.visibility = View.GONE
+            }
             draweeView.colorFilter = null
 
             // Reset overlay state based on item's current failure state and behavior setting
@@ -315,49 +394,60 @@ class GifAdapter(
 
             draweeView.controller = controllerBuilder.build()
             
-            // Set up click listeners - behavior depends on broken GIF setting
+            // Set up click listeners - behavior depends on broken GIF setting and load status
             itemView.setOnClickListener { 
-                when (brokenGifBehavior) {
-                    "thumbnail" -> {
-                        // Click inserts image (thumbnail)
-                        val imageUrl = gifItem.thumbnailUrl ?: gifItem.url
-                        onGifLongClickImage?.invoke(imageUrl)
-                    }
-                    "overlay" -> {
-                        // Click inserts link
-                        onGifLongClick(gifItem.url)
-                    }
-                    else -> {
-                        // "hide" or default - normal behavior
-                        if (gifItem.isFallbackImage && gifItem.thumbnailUrl != null) {
-                            onGifLongClick(gifItem.thumbnailUrl)
-                        } else {
+                if (gifItem.isFullLoadFailed) {
+                    when (brokenGifBehavior) {
+                        "thumbnail" -> {
+                            // Click inserts image (thumbnail)
+                            val imageUrl = gifItem.thumbnailUrl ?: gifItem.url
+                            onGifLongClickImage?.invoke(imageUrl)
+                        }
+                        "overlay" -> {
+                            // Click inserts link
+                            onGifLongClick(gifItem.url)
+                        }
+                        else -> {
+                            // "hide" or default - normal behavior
                             onGifClick(gifItem.url)
                         }
                     }
+                } else {
+                    // Normal behavior: click always inserts GIF
+                    onGifClick(gifItem.url)
                 }
             }
             
             itemView.setOnLongClickListener { 
-                // Long press does the opposite of click based on broken GIF setting
-                when (brokenGifBehavior) {
-                    "thumbnail" -> {
-                        // Long-press inserts link
-                        onGifLongClick(gifItem.url)
-                    }
-                    "overlay" -> {
-                        // Long-press inserts image (thumbnail)
-                        val imageUrl = gifItem.thumbnailUrl ?: gifItem.url
-                        onGifLongClickImage?.invoke(imageUrl)
-                    }
-                    else -> {
-                        // "hide" or default - use setting-based behavior
-                        if (insertImageOnLongPress) {
-                            val imageUrl = gifItem.thumbnailUrl ?: gifItem.url
-                            onGifLongClickImage?.invoke(imageUrl)
-                        } else if (insertLinkOnLongPress) {
+                if (gifItem.isFullLoadFailed) {
+                    // Long press does the opposite of click based on broken GIF setting
+                    when (brokenGifBehavior) {
+                        "thumbnail" -> {
+                            // Long-press inserts link
                             onGifLongClick(gifItem.url)
                         }
+                        "overlay" -> {
+                            // Long-press inserts image (thumbnail)
+                            val imageUrl = gifItem.thumbnailUrl ?: gifItem.url
+                            onGifLongClickImage?.invoke(imageUrl)
+                        }
+                        else -> {
+                            // Default behavior
+                            if (insertImageOnLongPress) {
+                                val imageUrl = gifItem.thumbnailUrl ?: gifItem.url
+                                onGifLongClickImage?.invoke(imageUrl)
+                            } else if (insertLinkOnLongPress) {
+                                onGifLongClick(gifItem.url)
+                            }
+                        }
+                    }
+                } else {
+                    // Normal long-press behavior: use setting-based behavior
+                    if (insertImageOnLongPress) {
+                        val imageUrl = gifItem.thumbnailUrl ?: gifItem.url
+                        onGifLongClickImage?.invoke(imageUrl)
+                    } else if (insertLinkOnLongPress) {
+                        onGifLongClick(gifItem.url)
                     }
                 }
                 true

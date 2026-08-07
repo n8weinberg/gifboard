@@ -4,6 +4,12 @@
 
     <androidx.preference.PreferenceCategory app:title="Search Settings">
 
+        <EditTextPreference
+            app:key="klipy_api_key"
+            app:title="Klipy API Key"
+            app:summary="Paste your Klipy API key here to use Klipy search. If empty, Google Gif Search will be used."
+            app:useSimpleSummaryProvider="true" />
+
         <SeekBarPreference
             app:defaultValue="2"
             app:key="gif_columns"
@@ -55,12 +61,6 @@
             app:title="@string/pref_broken_gif_title"
             app:dependency="live_previews"
             app:useSimpleSummaryProvider="true" />
-
-        <SwitchPreference
-            app:defaultValue="false"
-            app:key="enable_meme_search"
-            app:title="Enable Meme Search"
-            app:summary="Allow searching for and inserting image memes instead of GIFs" />
 
     </androidx.preference.PreferenceCategory>
 
