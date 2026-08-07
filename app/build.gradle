@@ -32,7 +32,7 @@ android {
             // F-Droid strips signingConfigs, so we need to check if it exists
             try {
                 if (signingConfigs.hasProperty('release') && signingConfigs.release.storeFile != null) {
-                    signingConfig = signingConfigs.release
+                    // signingConfig = signingConfigs.release
                 }
             } catch (Exception ignored) {
                 // Signing config not available (e.g., F-Droid build)
