@@ -58,7 +58,7 @@ jobs:
       - name: Build Unsigned Release APK
         run: |
           chmod +x ./gradlew
-          ./gradlew assembleRelease --max-workers=1
+          ./gradlew assembleRelease --no-configuration-cache --max-workers=1
 
       - name: Sign APK with apksigner from build-tools 34
         run: |
